@@ -5,12 +5,17 @@
 //! a non-zero exit means cancelled. There is deliberately no terminal
 //! fallback: sudo and ssh only use an askpass when they cannot, or were told
 //! not to, prompt on a terminal themselves.
+//!
+//! When `config.allowlist` points at a file, the caller (our parent, from
+//! `/proc/<pid>/exe`) must be listed there or the prompt is refused before
+//! the DMS socket is even contacted.
 
 use std::io::Write;
 use std::process::ExitCode;
 
 use zeroize::Zeroize;
 
+use dank_pinentry::allowlist;
 use dank_pinentry::assuan::state::Options;
 use dank_pinentry::backend::DmsBackend;
 use dank_pinentry::backend::dms::{OwnerInfo, PROTOCOL_VERSION, Request, request_id};
@@ -54,6 +59,39 @@ fn main() -> ExitCode {
     let mode = Mode::from_env(std::env::var("SSH_ASKPASS_PROMPT").ok().as_deref());
 
     let config = Config::load();
+
+    // The caller is the parent: sudo, ssh, gpg-agent and rosec's prompt
+    // wrapper all exec us directly. Refuse before anything else — before the
+    // DMS socket is even contacted — so a disallowed caller learns nothing
+    // and no dialog appears. An unset or empty allowlist leaves the gate off.
+    let parent = std::os::unix::process::parent_id();
+    if let Some(allowlist_path) = config.allowlist.as_deref() {
+        let patterns = allowlist::load(Some(allowlist_path));
+        if !patterns.is_empty() {
+            let caller = owner::exec_path(parent);
+            match caller {
+                None => {
+                    eprintln!(
+                        "dank-askpass: refusing prompt: cannot resolve /proc/{parent}/exe of the caller"
+                    );
+                    return ExitCode::FAILURE;
+                }
+                Some(exe) if !allowlist::allows(&patterns, &exe) => {
+                    eprintln!(
+                        "dank-askpass: refusing prompt: {} is not on the caller allowlist",
+                        exe.display()
+                    );
+                    eprintln!(
+                        "dank-askpass: add the caller to {} or unset the allowlist",
+                        allowlist_path.display()
+                    );
+                    return ExitCode::FAILURE;
+                }
+                Some(_) => {}
+            }
+        }
+    }
+
     let socket = config.socket_path();
     if !DmsBackend::is_available(&socket) {
         eprintln!(
@@ -63,8 +101,7 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    // The caller is the parent: sudo or ssh forks and execs us directly.
-    let parent = std::os::unix::process::parent_id();
+    // The owner is attributed to the DMS dialog so it can name the caller.
     let request = Request {
         v: PROTOCOL_VERSION,
         kind: mode.request_kind(),

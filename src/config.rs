@@ -43,6 +43,11 @@ pub struct Config {
     /// Seconds before an unanswered prompt cancels itself; 0 means never.
     /// gpg-agent's `pinentry-timeout`, when set, still takes precedence.
     pub timeout: Option<u32>,
+    /// File naming the programs allowed to exec `dank-askpass`. When set and
+    /// non-empty, prompts from any other caller are refused before the DMS
+    /// socket is even contacted. A missing or empty file makes the allowlist
+    /// inert rather than locking the user out.
+    pub allowlist: Option<PathBuf>,
 }
 
 impl Default for Config {
@@ -52,6 +57,7 @@ impl Default for Config {
             socket_path: None,
             mask_char: None,
             timeout: None,
+            allowlist: None,
         }
     }
 }
@@ -212,6 +218,16 @@ mod tests {
     }
 
     #[test]
+    fn parses_allowlist() {
+        let config = Config::from_toml("allowlist = \"/nix/store/allowlist\"").unwrap();
+        assert_eq!(
+            config.allowlist,
+            Some(PathBuf::from("/nix/store/allowlist"))
+        );
+        assert_eq!(Config::default().allowlist, None);
+    }
+
+    #[test]
     fn comments_are_ignored() {
         let config = Config::from_toml("# a comment\nui = \"tty\" # trailing\n").unwrap();
         assert_eq!(config.ui, UiPreference::Tty);
@@ -266,6 +282,12 @@ mod tests {
             from_env(&[("DANK_PINENTRY_TIMEOUT", "90")]).timeout,
             Some(90)
         );
+    }
+
+    #[test]
+    fn allowlist_environment_maps_onto_the_field() {
+        let config = from_env(&[("DANK_PINENTRY_ALLOWLIST", "/tmp/al.txt")]);
+        assert_eq!(config.allowlist, Some(PathBuf::from("/tmp/al.txt")));
     }
 
     #[test]

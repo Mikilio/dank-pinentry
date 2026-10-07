@@ -4,6 +4,7 @@
 //! Split into a library and a thin binary so the protocol layer can be driven
 //! from integration tests without spawning a process.
 
+pub mod allowlist;
 pub mod assuan;
 pub mod backend;
 pub mod cli;

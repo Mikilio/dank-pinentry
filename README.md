@@ -154,6 +154,7 @@ sources.
 | `socket_path` | path                 | `$XDG_RUNTIME_DIR/dms-pinentry.sock` | Where the plugin listens                                    |
 | `mask_char`   | character            | `*`                                  | Drawn per typed character in the terminal                   |
 | `timeout`     | seconds              | `60`                                 | Cancel an unanswered prompt after this long; `0` never does |
+| `allowlist`   | path                 | unset                                | Also gates `dank-askpass` on the calling program (see below) |
 
 Each key can be overridden with `DANK_PINENTRY_<KEY>` (e.g.
 `DANK_PINENTRY_TIMEOUT`), and `ui` and `timeout` also with `--ui` and
@@ -270,6 +271,40 @@ ssh uses `SSH_ASKPASS` only without a terminal, unless
 `SSH_ASKPASS_REQUIRE=prefer` (or `force`) is set. Its confirmation
 (`SSH_ASKPASS_PROMPT=confirm`) and notification (`none`) prompts are drawn as
 confirm and message dialogs.
+
+### Caller allowlist
+
+`dank-askpass` is exec'd directly by the program that wants the credential:
+sudo, ssh, gpg-agent, or (with a wrapper) rosec. Set `allowlist` to a file
+naming which programs may do that, and every other caller is refused before
+the plugin socket is even contacted:
+
+```toml
+allowlist = "/etc/dank-pinentry/askpass.allowlist"
+```
+
+```sh
+# /etc/dank-pinentry/askpass.allowlist — one entry per line
+sudo
+ssh
+gpg-agent
+*/bin/bash      # script interpreters exec us, not the script itself
+```
+
+An entry without a `/` matches the executable name; with a `/` it is a glob on
+the full resolved path (so the kernel's view of the image, not a name the
+process gave itself). Lines that are blank or start with `#` are skipped. The
+caller is your process's parent: a script never becomes it, so when a wrapper
+script routes prompts here, list the wrapper's interpreter (the shell), not
+the script.
+
+When the allowlist is unset, the file is missing, or the file is empty, the
+gate is off. It is a same-user policy, not a sandbox: the program being asked
+can read and edit the file, so it keeps accidental or phished prompts away
+rather than guarding against a hostile local process. `DANK_PINENTRY_ALLOWLIST`
+overrides the config file, and this key applies to `dank-askpass` only —
+`dank-pinentry`'s own gpg-agent calls are covered by the plugin's `showOwner`
+instead.
 
 ## Security
 

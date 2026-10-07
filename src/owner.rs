@@ -58,6 +58,14 @@ pub fn proc_path(pid: u32, entry: &str) -> PathBuf {
     PathBuf::from(format!("/proc/{pid}/{entry}"))
 }
 
+/// The on-disk binary a process is running. Unlike `/proc/<pid>/comm`
+/// (mutable via `prctl(PR_SET_NAME)`) this is the kernel's resolution of the
+/// executed image, so an allowlist matched against it cannot be fooled by a
+/// process renaming itself.
+pub fn exec_path(pid: u32) -> Option<PathBuf> {
+    std::fs::read_link(proc_path(pid, "exe")).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -117,5 +125,17 @@ mod tests {
             proc_path(42, "cmdline").to_str().unwrap(),
             "/proc/42/cmdline"
         );
+    }
+
+    #[test]
+    fn exec_path_resolves_our_own_binary() {
+        let exe = exec_path(std::process::id()).expect("own exe is readable");
+        assert!(exe.is_absolute(), "{exe:?}");
+        assert!(exe.file_name().is_some(), "{exe:?}");
+    }
+
+    #[test]
+    fn exec_path_has_no_readable_exe_for_a_bogus_pid() {
+        assert_eq!(exec_path(u32::MAX), None);
     }
 }
